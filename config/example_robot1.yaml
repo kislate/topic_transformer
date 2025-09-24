@@ -1,0 +1,26 @@
+# Robot 1 配置示例
+# 这个配置用于机器人1，它会发送位置信息给机器人2，并接收机器人2的命令
+
+network:
+  local_ip: "0.0.0.0"     # 绑定所有接口
+  local_port: 8001        # 机器人1的监听端口
+  dest_ip: "192.168.1.102"  # 机器人2的IP地址
+  dest_port: 8002         # 机器人2的监听端口
+
+heartbeat:
+  enabled: true
+  interval_ms: 3000
+
+# 发送给机器人2的话题
+publish_topics:
+  - topic_name: "/robot1/pose"
+    topic_type: "pose_stamped"
+  - topic_name: "/robot1/status"
+    topic_type: "string"
+
+# 接收来自机器人2的话题
+subscribe_topics:
+  - topic_name: "/robot2/command"
+    topic_type: "string"
+  - topic_name: "/robot2/goal"
+    topic_type: "pose_stamped"

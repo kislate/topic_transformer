@@ -1,19 +1,55 @@
 #include "udp_communicator.h"
 #include <iostream>
-#include <cstirng>
+#include <cstring>
 #include <unistd.h>
 
+// 构造函数中初始化心跳相关变量
 UDPCommunicator::UDPCommunicator(const std::string& local_ip, int port,
                                  const std::string& dest_ip, int dest_port)
     : local_ip_(local_ip), local_port_(port),
       dest_ip_(dest_ip), dest_port_(dest_port),
-      running_(false), sock_(-1) {}
+      running_(false), sock_(-1),
+      heartbeat_enabled_(false), heartbeat_interval_ms_(5000) {
+    // 初始化时间点
+    auto now = std::chrono::steady_clock::now();
+    last_received_.store(now);
+    last_heartbeat_.store(now);
+}
+
+void UDPCommunicator::stop() {
+    if (running_) {
+        running_ = false;
+        heartbeat_enabled_ = false;  // 停止心跳
+
+        // shutdown the socket to unblock recvfrom
+        if (sock_ >= 0) {
+            shutdown(sock_, SHUT_RDWR);  // shutdown the socket to unblock recvfrom
+        }
+        
+        // 等待所有线程结束
+        if (recv_thread_.joinable()) {
+            recv_thread_.join();  // wait for the receive thread to finish
+        }
+        if (heartbeat_thread_.joinable()) {
+            heartbeat_thread_.join();
+        }
+
+        // now it's safe to close
+        if (sock_ >= 0) {
+            close(sock_);
+            sock_ = -1;
+        }
+        
+        std::cout << "UDP Communicator stopped." << std::endl;
+    }
+    else {
+        std::cout << "UDP Communicator is not running." << std::endl;
+    }
+}
 
 UDPCommunicator::~UDPCommunicator() {
     stop();
-    if (sock_ >= 0) {
-        close(sock_);
-    }   // ensure socket is closed
+    // no need to close sock_ here, already done in stop()
 }
 
 bool UDPCommunicator::start() {
@@ -39,11 +75,11 @@ bool UDPCommunicator::start() {
     memset(&recv_addr_, 0, sizeof(recv_addr_));
     recv_addr_.sin_family = AF_INET;
     // recv_addr_.sin_addr.s_addr = inet_addr(local_ip_.c_str());
-    if (local_ip_ == "0.0.0.0") {
+    if (local_ip_ == "0.0.0.0") { // good choice for binding to all interfaces
         recv_addr_.sin_addr.s_addr = INADDR_ANY; // bind to all interfaces
-        ROS::INFO("Binding to all interfaces.");
+        ROS_INFO("Binding to all interfaces.");
     } else {
-        ROS::INFO("Binding to local IP: %s", local_ip_.c_str());
+        ROS_INFO("Binding to local IP: %s", local_ip_.c_str());
         recv_addr_.sin_addr.s_addr = inet_addr(local_ip_.c_str());
         if (recv_addr_.sin_addr.s_addr == INADDR_NONE) {
             std::cerr << "Invalid local IP address." << std::endl;
@@ -62,25 +98,17 @@ bool UDPCommunicator::start() {
     }
 
     running_ = true;
-    receiver_thread_ = std::thread(&UDPCommunicator::receive_loop, this);
+    recv_thread_ = std::thread(&UDPCommunicator::receive_loop, this);  // 修复：receiver_thread_ -> recv_thread_
+    
+    // 如果心跳已启用，启动心跳线程
+    if (heartbeat_enabled_) {
+        heartbeat_thread_ = std::thread(&UDPCommunicator::heartbeat_loop, this);
+    }
+    
     std::cout << "UDP Communicator started on " << local_ip_ << ":" << local_port_
               << " sending to " << dest_ip_ << ":" << dest_port_ << std::endl;
     return true; // good to go
 }
-
-void UDPCommunicator::stop() {
-    if (running_) {
-        running_ = false;
-        if (receiver_thread_.joinable()) {
-            receiver_thread_.join();
-        }
-        std::cout << "UDP Communicator stopped." << std::endl;
-    }
-    else {
-        std::cout << "UDP Communicator is not running." << std::endl;
-    }
-}
-
 
 bool UDPCommunicator::send_json(const json& j) {
     if (sock_ < 0) {
@@ -109,8 +137,21 @@ void UDPCommunicator::receive_loop() {
                                     (struct sockaddr*)&recv_addr_, &addr_len);
         if (recv_len > 0) {
             buffer[recv_len] = '\0'; // null-terminate
+            
+            // 更新最后接收时间
+            last_received_.store(std::chrono::steady_clock::now());
+            
             try {
                 json j = json::parse(buffer);
+                
+                // 处理心跳消息
+                if (MessageTypes::is_heartbeat(j)) {
+                    last_heartbeat_.store(std::chrono::steady_clock::now());
+                    // 可以选择回应心跳或只是记录
+                    continue;  // 不传递给用户回调
+                }
+                
+                // 处理普通消息
                 std::string topic;
                 std::string msg_type;
                 json data;
@@ -123,16 +164,99 @@ void UDPCommunicator::receive_loop() {
                 std::cerr << "Failed to parse JSON: " << e.what() << std::endl;
             }
         } else if (recv_len < 0) {
-            if (running_) { // only report error if we are supposed to be running
-                std::cerr << "Receive error." << std::endl;
-                std::cerr << "OH NO! May be the drone is dead." << std::endl;
-                /*
-                    may add other logic here, like restarting the socket or something
-                    but for now, i don't know, he he, ha ha
-                */
+            // if (running_) { // only report error if we are supposed to be running
+            //     std::cerr << "Receive error." << std::endl;
+            //     std::cerr << "OH NO! May be the drone is dead." << std::endl;
+            //     /*
+            //         may add other logic here, like restarting the socket or something
+            //         but for now, i don't know, he he, ha ha
+            //     */
+            // }
+            int error_code = errno;  // get the error_code
+            switch (error_code) {
+                case EAGAIN:
+                case EWOULDBLOCK:
+                    // no data available right now in non-blocking mode
+                    continue;
+                case EINTR:
+                    // interrupted by signal
+                    ROS_WARN("EINTR:Receive interrupted by signal, continuing...");
+                    continue;
+                case ECONNRESET:
+                    ROS_WARN("ECONNRESET:Connection reset by peer.");
+                    break;
+                case ENETUNREACH:
+                    ROS_WARN("ENETUNREACH:Network unreachable.");
+                    break;
+                case EBADF:
+                    // otherwise, EBADF means the socket was closed unexpectedly
+                    if (running_) {
+                        ROS_ERROR("EBADF: Invalid socket descriptor while running.");
+                        ROS_ERROR("This indicates a serious problem - socket was closed unexpectedly.");
+                    }
+                    running_ = false;
+                    break;
+                default:
+                    ROS_ERROR("Receive error: %s (errno: %d)", strerror(error_code), error_code);
+                    break;
             }
+            /*
+                may add other logic here, like restarting the socket or something
+                but for now, i don't know, he he, ha ha
+            */
         }
         // else recv_len == 0 means no data received; continue
     }
+}
+
+// 心跳控制方法
+void UDPCommunicator::enable_heartbeat(int interval_ms) {
+    heartbeat_interval_ms_ = interval_ms;
+    heartbeat_enabled_ = true;
+    
+    // 如果已经在运行，启动心跳线程
+    if (running_ && !heartbeat_thread_.joinable()) {
+        heartbeat_thread_ = std::thread(&UDPCommunicator::heartbeat_loop, this);
+    }
+    
+    ROS_INFO("Heartbeat enabled with %d ms interval", interval_ms);
+}
+
+void UDPCommunicator::disable_heartbeat() {
+    heartbeat_enabled_ = false;
+    ROS_INFO("Heartbeat disabled");
+}
+
+// 心跳发送循环
+void UDPCommunicator::heartbeat_loop() {
+    while (running_ && heartbeat_enabled_) {
+        // 发送心跳包
+        json heartbeat = MessageTypes::make_heartbeat_message();
+        if (!send_json(heartbeat)) {
+            ROS_WARN("Failed to send heartbeat");
+        }
+        
+        // 检查对端是否存活
+        if (!check_peer_alive()) {
+            ROS_WARN("Peer seems offline - no response for %.1f seconds", 
+                     heartbeat_interval_ms_ * 3.0 / 1000.0);
+            /*
+                add other logic here
+            */
+        }
+        
+        // 等待指定间隔
+        std::this_thread::sleep_for(std::chrono::milliseconds(heartbeat_interval_ms_));
+    }
+}
+
+// 检查对端存活状态
+bool UDPCommunicator::check_peer_alive() {
+    auto now = std::chrono::steady_clock::now();
+    auto last_received = last_received_.load();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_received);
+    
+    // 如果超过 3 个心跳间隔没收到消息，认为对端可能离线
+    return elapsed.count() < (heartbeat_interval_ms_ * 3);
 }
 

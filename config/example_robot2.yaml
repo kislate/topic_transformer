@@ -1,0 +1,12 @@
+# Robot 2 配置示例
+# 这个配置用于机器人2，它会接收机器人1的位置信息，并发送命令给机器人1
+
+network:
+  local_ip: "0.0.0.0"     # 绑定所有接口
+  local_port: 8002        # 机器人2的监听端口
+  dest_ip: "192.168.1.101"  # 机器人1的IP地址
+  dest_port: 8001         # 机器人1的监听端口
+
+heartbeat:
+  enabled: true
+  interval_ms: 3000

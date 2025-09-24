@@ -1,0 +1,7 @@
+<launch>
+  <!-- Topic Transformer Node -->
+  <node name="topic_transformer" pkg="topic_transformer" type="topic_transformer_node" output="screen">
+    <!-- Load configuration from YAML file -->
+    <rosparam file="$(find topic_transformer)/config/transformer_config.yaml" command="load"/>
+  </node>
+</launch>
