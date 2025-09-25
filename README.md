@@ -1,45 +1,40 @@
 # Topic Transformer
 
-一个ROS包，用于通过UDP网络传输ROS话题，实现跨网络的话题通信。
+一个ROS包，用于通过UDP网络传输ROS话题，实现跨网络的话题通信。支持双向通信：本地话题通过UDP发送到远程，远程消息通过UDP接收并发布到本地。
 
 ## 功能特性
 
-- 通过UDP发送ROS话题到远程主机
-- 接收UDP消息并发布为ROS话题
-- 支持 `geometry_msgs/PoseStamped` 和 `std_msgs/String` 消息类型
-- 心跳机制确保连接状态
-- YAML配置文件，便于扩展和维护
+- **双向话题传输**：支持本地→远程和远程→本地的话题转发
+- **多消息类型**：支持 `geometry_msgs/PoseStamped` 和 `std_msgs/String` 消息类型
+- **心跳机制**：定期发送心跳包检测网络连接状态
+- **灵活配置**：支持多个话题订阅，通过YAML配置文件管理
+- **话题前缀**：自动为接收到的远程话题添加前缀标识
 
 ## 配置文件
 
 编辑 `config/transformer_config.yaml` 来配置网络和话题设置：
 
 ```yaml
+# 飞机编号
+drone_id: 0
+topic_prefix: "drone_1"      # 来自远程的话题前缀
+
 # 网络配置
-network:
-  local_ip: "0.0.0.0"           # 本地IP，0.0.0.0表示绑定所有接口
-  local_port: 8001              # 本地监听端口
-  dest_ip: "192.168.1.100"      # 目标主机IP
-  dest_port: 8002               # 目标主机端口
+local_ip: "0.0.0.0"          # 本地IP，0.0.0.0表示绑定所有接口
+local_port: 46666            # 本地监听端口
+dest_ip: "192.168.1.100"     # 目标主机IP
+dest_port: 46667             # 目标主机端口
 
 # 心跳配置
-heartbeat:
-  enabled: true
-  interval_ms: 3000             # 心跳间隔（毫秒）
+heartbeat_enabled: true
+heartbeat_interval_ms: 10000  # 心跳间隔（毫秒）
 
-# 话题转发配置 - ROS话题 -> UDP
-publish_topics:
-  - topic_name: "/robot/pose"
-    topic_type: "pose_stamped"
-  - topic_name: "/robot/status"
-    topic_type: "string"
-
-# 话题接收配置 - UDP -> ROS话题  
-subscribe_topics:
-  - topic_name: "/remote/cmd"
-    topic_type: "string"
-  - topic_name: "/remote/goal"
-    topic_type: "pose_stamped"
+# 发送的话题配置 - 本地话题 -> UDP
+sub_topic_num: 2              # 要发送的话题数量
+sub_topic_1_name: "mavros/local_position/pose"
+sub_topic_1_type: "pose_stamped"
+sub_topic_2_name: "status"
+sub_topic_2_type: "string"
 ```
 
 ## 使用方法
@@ -54,7 +49,11 @@ source devel/setup.bash
 
 ### 2. 修改配置
 
-根据您的网络环境修改 `config/transformer_config.yaml`。
+根据您的网络环境修改 `config/transformer_config.yaml`：
+
+- 设置正确的网络参数（IP地址和端口）
+- 配置要发送的本地话题
+- 设置话题前缀用于区分远程消息
 
 ### 3. 启动节点
 
@@ -62,53 +61,144 @@ source devel/setup.bash
 roslaunch topic_transformer transformer.launch
 ```
 
-### 4. 测试
-
-发布测试消息：
+或者使用自定义参数：
 
 ```bash
-# 发布字符串消息
-rostopic pub /robot/status std_msgs/String "data: 'Hello from robot'"
-
-# 发布位置消息
-rostopic pub /robot/pose geometry_msgs/PoseStamped "header:
-  seq: 0
-  stamp:
-    secs: 0
-    nsecs: 0
-  frame_id: 'base_link'
-pose:
-  position:
-    x: 1.0
-    y: 2.0
-    z: 0.0
-  orientation:
-    x: 0.0
-    y: 0.0
-    z: 0.0
-    w: 1.0"
+rosrun topic_transformer topic_transformer_node \
+  _local_ip:="0.0.0.0" \
+  _local_port:=46666 \
+  _dest_ip:="192.168.1.100" \
+  _dest_port:=46667 \
+  _sub_topic_num:=1 \
+  _sub_topic_1_name:="mavros/local_position/pose" \
+  _sub_topic_1_type:="pose_stamped"
 ```
 
-监听接收到的消息：
+### 4. 测试发送功能
+
+发布本地话题（会通过UDP发送到远程）：
 
 ```bash
-# 监听从UDP接收的消息
-rostopic echo /remote/cmd
-rostopic echo /remote/goal
+# 发布位置消息（如果配置了pose类型话题）
+rostopic pub /mavros/local_position/pose geometry_msgs/PoseStamped "header:
+  seq: 0
+  stamp: {secs: 0, nsecs: 0}
+  frame_id: 'base_link'
+pose:
+  position: {x: 1.0, y: 2.0, z: 0.0}
+  orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}"
+
+# 发布字符串消息（如果配置了string类型话题）
+rostopic pub /status std_msgs/String "data: 'Hello from drone'"
+```
+
+### 5. 监听接收功能
+
+监听从UDP接收的远程消息（会自动添加前缀）：
+
+```bash
+# 监听远程发来的消息（假设topic_prefix为"drone_1"）
+rostopic echo /drone_1/mavros/local_position/pose
+rostopic echo /drone_1/status
+
+# 查看所有可用话题
+rostopic list | grep drone_1
 ```
 
 ## 工作原理
 
-1. **ROS话题 -> UDP**: 节点订阅配置中的ROS话题，将接收到的消息转换为JSON格式通过UDP发送
-2. **UDP -> ROS话题**: 节点监听UDP端口，将接收到的JSON消息解析后发布为ROS话题
-3. **心跳机制**: 定期发送心跳包检测网络连接状态
+### 双向通信架构
+
+```
+本地ROS节点 → 订阅器 → JSON转换 → UDP发送 → 远程主机
+                                                    ↓
+远程ROS节点 ← 发布器 ← JSON解析 ← UDP接收 ← 远程主机
+```
+
+### 消息流程
+
+1. **本地→远程（发送）**：
+   - 订阅配置中的本地ROS话题
+   - 将ROS消息转换为JSON格式
+   - 通过UDP发送到目标主机
+
+2. **远程→本地（接收）**：
+   - 监听UDP端口接收远程消息
+   - 解析JSON消息并转换为ROS消息
+   - 添加话题前缀后发布到本地ROS网络
+
+3. **心跳机制**：
+   - 定期发送心跳包检测连接状态
+   - 监控对端是否在线
 
 ## 支持的消息类型
 
-- `geometry_msgs/PoseStamped` - 位置姿态信息
-- `std_msgs/String` - 字符串消息
+- **geometry_msgs/PoseStamped** - 位置姿态信息
+- **std_msgs/String** - 字符串消息
 
-可通过修改 `message_types.h` 和相应的处理代码来支持更多消息类型。
+要支持更多消息类型，需要：
+1. 在 `message_types.h` 中添加转换函数
+2. 在主程序中添加对应的处理逻辑
+
+## 多机器人配置示例
+
+### 机器人A配置（drone_0）
+```yaml
+drone_id: 0
+topic_prefix: "drone_1"
+local_port: 46666
+dest_ip: "192.168.1.102"
+dest_port: 46667
+sub_topic_1_name: "mavros/local_position/pose"
+```
+
+### 机器人B配置（drone_1）
+```yaml
+drone_id: 1
+topic_prefix: "drone_0"
+local_port: 46667
+dest_ip: "192.168.1.101"
+dest_port: 46666
+sub_topic_1_name: "mavros/local_position/pose"
+```
+
+这样配置后：
+- 机器人A会接收到 `/drone_1/mavros/local_position/pose`
+- 机器人B会接收到 `/drone_0/mavros/local_position/pose`
+
+## 故障排除
+
+### 常见问题
+
+1. **UDP端口被占用**：
+   ```bash
+   netstat -tulpn | grep :46666
+   ```
+
+2. **网络连接问题**：
+   ```bash
+   ping 192.168.1.100
+   telnet 192.168.1.100 46667
+   ```
+
+3. **消息未发送**：
+   - 检查话题名称是否正确
+   - 确认消息类型匹配
+   - 查看ROS日志输出
+
+### 调试命令
+
+```bash
+# 查看节点状态
+rosnode info /topic_transformer_node
+
+# 监控网络流量
+sudo tcpdump -i any port 46666
+
+# 查看ROS话题
+rostopic list
+rostopic info /your_topic_name
+```
 
 一个用于在不同 ROS 节点之间通过 UDP 转发消息的工具。支持将 ROS 消息序列化为 JSON 格式进行网络传输。
 
