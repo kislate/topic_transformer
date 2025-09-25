@@ -161,8 +161,9 @@ void UDPCommunicator::receive_loop() {
                 json data;
                 double timestamp;
                 MessageTypes::parse_received(j, topic, msg_type, data, timestamp);
-                if (message_callback_) {
-                    message_callback_(topic, data, timestamp);
+                if (message_callback_) { 
+                    // 傻逼问题
+                    message_callback_(topic, j, timestamp);  // 传递完整的JSON而不是只传递data
                 }
             } catch (const std::exception& e) {
                 std::cerr << "Failed to parse JSON: " << e.what() << std::endl;
@@ -245,7 +246,7 @@ void UDPCommunicator::heartbeat_loop() {
         // 检查对端是否存活
         if (!check_peer_alive()) {
             ROS_WARN("Peer seems offline - no response for %.1f seconds", 
-                     heartbeat_interval_ms_ * 3.0 / 1000.0);
+                     heartbeat_interval_ms_ / 1000.0);
             /*
                 add other logic here
             */

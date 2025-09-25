@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
                      topic.c_str(), timestamp, j.dump().c_str());
             
             // transform topic name by adding prefix
-            std::string transformed_topic = topic_prefix_ + "/" + topic;
+            std::string transformed_topic = topic_prefix_ + topic;
             
             // 获取消息类型并转换为枚举
             std::string msg_type_str = j.value("type", "unknown");

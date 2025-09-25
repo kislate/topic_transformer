@@ -1,7 +1,7 @@
 # Topic Transformer Configuration
 # 飞机编号
 drone_id: 0
-topic_prefix: "drone_1" # 来自drone_1 的话题
+topic_prefix: "/remote" # 来自drone_1 的话题
 # 网络配置
 local_ip: "0.0.0.0"     # 本地IP，0.0.0.0 表示绑定所有接口
 local_port: 46666      # 本地端口
@@ -15,5 +15,5 @@ heartbeat_interval_ms: 10000 # 10s
 # 发送的话题配置
 # pose_stamped, string
 sub_topic_num: 1
-sub_topic_1_name: "mavros/local_position/pose"
-sub_topic_1_type: "pose_stamped"
+sub_topic_1_name: "/lzk_string"
+sub_topic_1_type: "string"
