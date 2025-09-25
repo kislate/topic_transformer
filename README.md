@@ -327,7 +327,7 @@ comm.set_message_callback([](const std::string& topic, const json& data, double 
 
 ```cpp
 // 启动 UDP 通信
-if (comm.start()) {
+if (comm->start()) {
     ROS_INFO("UDP 通信启动成功");
 } else {
     ROS_ERROR("UDP 通信启动失败");
@@ -335,7 +335,7 @@ if (comm.start()) {
 }
 
 // 程序结束时停止
-comm.stop();
+comm->stop();
 ```
 
 ### 4. 发送消息
@@ -350,14 +350,14 @@ pose_msg.pose.position.y = 2.0;
 pose_msg.pose.position.z = 3.0;
 
 json pose_json = MessageTypes::make_pose_message("/robot_pose", pose_msg);
-comm.send_json(pose_json);
+comm->send_json(pose_json);
 
 // 发送 String 消息
 std_msgs::String str_msg;
 str_msg.data = "Hello, ROS!";
 
 json str_json = MessageTypes::make_string_message("/status", str_msg);
-comm.send_json(str_json);
+comm->send_json(str_json);
 ```
 
 ## 完整示例
@@ -367,14 +367,16 @@ comm.send_json(str_json);
 #include <ros/ros.h>
 #include "udp_communicator.h"
 #include <geometry_msgs/PoseStamped.h>
+#include <memory>
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "udp_sender");
     ros::NodeHandle nh;
     
-    UDPCommunicator comm("127.0.0.1", 8888, "127.0.0.1", 8889);
+    std::unique_ptr<UDPCommunicator> comm;
+    comm.reset(new UDPCommunicator("127.0.0.1", 8888, "127.0.0.1", 8889));
     
-    if (!comm.start()) {
+    if (!comm->start()) {
         ROS_ERROR("无法启动 UDP 通信");
         return -1;
     }
@@ -388,12 +390,12 @@ int main(int argc, char** argv) {
         pose.pose.position.x = sin(ros::Time::now().toSec());
         
         json msg = MessageTypes::make_pose_message("/robot_pose", pose);
-        comm.send_json(msg);
+        comm->send_json(msg);
         
         rate.sleep();
     }
     
-    comm.stop();
+    comm->stop();
     return 0;
 }
 ```
@@ -402,19 +404,21 @@ int main(int argc, char** argv) {
 ```cpp
 #include <ros/ros.h>
 #include "udp_communicator.h"
+#include <memory>
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "udp_receiver");
     ros::NodeHandle nh;
     
-    UDPCommunicator comm("127.0.0.1", 8889, "127.0.0.1", 8888);
+    std::unique_ptr<UDPCommunicator> comm;
+    comm.reset(new UDPCommunicator("127.0.0.1", 8889, "127.0.0.1", 8888));
     
     // 设置接收回调
-    comm.set_message_callback([](const std::string& topic, const json& data, double ts) {
+    comm->set_message_callback([](const std::string& topic, const json& data, double ts) {
         ROS_INFO("接收到话题 %s 的消息，时间戳: %.3f", topic.c_str(), ts);
     });
     
-    if (!comm.start()) {
+    if (!comm->start()) {
         ROS_ERROR("无法启动 UDP 通信");
         return -1;
     }
