@@ -1,0 +1,10 @@
+.vscode/
+.vscode-test/
+build/
+cmake-build-debug/
+cmake-build-release/
+CMakeFiles/
+CMakeCache.txt
+
+*.log
+*.DS_Store/

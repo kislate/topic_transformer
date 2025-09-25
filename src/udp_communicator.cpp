@@ -9,11 +9,14 @@ UDPCommunicator::UDPCommunicator(const std::string& local_ip, int port,
     : local_ip_(local_ip), local_port_(port),
       dest_ip_(dest_ip), dest_port_(dest_port),
       running_(false), sock_(-1),
-      heartbeat_enabled_(false), heartbeat_interval_ms_(5000) {
-    // 初始化时间点
-    auto now = std::chrono::steady_clock::now();
-    last_received_.store(now);
-    last_heartbeat_.store(now);
+      heartbeat_enabled_(false), heartbeat_interval_ms_(5000),
+      last_received_(std::chrono::steady_clock::now()),  // 显式初始化
+      last_heartbeat_(std::chrono::steady_clock::now())  // 显式初始化
+      // last_received_.store(now);
+      // last_heartbeat_.store(now); (deleted function)
+
+{
+    // 构造函数体现在可以为空，或者添加其他初始化逻辑
 }
 
 void UDPCommunicator::stop() {
@@ -59,7 +62,8 @@ bool UDPCommunicator::start() {
         return false;
     }
 
-    sock_ = socket(AF_INET, SOCKET_DGRAM, 0);
+    // sock_ = socket(AF_INET, SOCKET_DGRAM, 0);
+    sock_ = socket(AF_INET, SOCK_DGRAM, 0); // fixed: SOCKET_DGRAM -> SOCK_DGRAM
     if (sock_ < 0) {
         std::cerr << "Failed to create socket." << std::endl;
         return false;
@@ -175,7 +179,9 @@ void UDPCommunicator::receive_loop() {
             int error_code = errno;  // get the error_code
             switch (error_code) {
                 case EAGAIN:
-                case EWOULDBLOCK:
+            #if EAGAIN != EWOULDBLOCK
+                case EWOULDBLOCK: // in some systems these are the same
+            #endif
                     // no data available right now in non-blocking mode
                     continue;
                 case EINTR:

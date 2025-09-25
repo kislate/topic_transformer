@@ -11,3 +11,9 @@ dest_port: 46667         # 目标主机端口
 # 心跳配置
 heartbeat_enabled: true
 heartbeat_interval_ms: 10000 # 10s
+
+# 发送的话题配置
+# pose_stamped, string
+sub_topic_num: 1
+sub_topic_1_name: "mavros/local_position/pose"
+sub_topic_1_type: "pose_stamped"
